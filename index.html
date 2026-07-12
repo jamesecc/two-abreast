@@ -1,0 +1,943 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two Abreast — the view from behind</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --glass: rgba(13, 17, 20, 0.84);
+    --glass-soft: rgba(13, 17, 20, 0.62);
+    --ink: #eef2ee;
+    --muted: #9fab9e;
+    --line: rgba(255, 255, 255, 0.09);
+    --accent: #d7e34c;
+    --good: #7fd28c;
+    --warn: #f0b34e;
+    font-size: 15px;
+  }
+  html, body { height: 100%; overflow: hidden; background: #b9c7d3; }
+  body {
+    font-family: "Avenir Next", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    color: var(--ink);
+  }
+  canvas#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .hud { position: fixed; z-index: 2; }
+  .glass {
+    background: var(--glass);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 6px 24px rgba(10, 14, 12, 0.35);
+  }
+  .eyebrow {
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted);
+  }
+
+  /* ---- stat pill ---- */
+  #stats {
+    top: 14px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: stretch; gap: 0;
+    padding: 10px 6px; white-space: nowrap; max-width: calc(100vw - 24px);
+  }
+  #stats .stat { padding: 2px 18px; text-align: center; }
+  #stats .stat + .stat { border-left: 1px solid var(--line); }
+  #stats .val {
+    font-size: 1.5rem; font-weight: 600; line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+  #stats .val small { font-size: 0.85rem; font-weight: 500; color: var(--muted); }
+  #statTrue .val { color: var(--good); }
+  #statSeen .val { color: var(--warn); }
+  #statSeen .val.big { color: #f07f4e; }
+
+  /* ---- control panel ---- */
+  #panel {
+    top: 14px; left: 14px; width: 272px;
+    max-height: calc(100vh - 28px);
+    display: flex; flex-direction: column;
+    z-index: 3;   /* above the plan view when opened on small screens */
+  }
+  #panelHead {
+    padding: 14px 16px 12px; cursor: pointer; user-select: none;
+    display: flex; align-items: baseline; justify-content: space-between;
+  }
+  #panelHead h1 { font-size: 0.95rem; font-weight: 600; letter-spacing: 0.01em; }
+  #panelHead .eyebrow { display: block; margin-bottom: 2px; color: var(--accent); }
+  #panelToggle {
+    display: inline-flex; align-items: center; gap: 7px; align-self: center;
+    flex: none; margin-left: 12px;
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em; color: var(--ink);
+    background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 11px; white-space: nowrap;
+  }
+  #panelHead:hover #panelToggle { background: rgba(255, 255, 255, 0.16); }
+  #panelToggle .cv {
+    width: 7px; height: 7px; flex: none;
+    border-right: 2px solid var(--accent); border-bottom: 2px solid var(--accent);
+    transform: rotate(-135deg) translate(-1px, -1px); transition: transform 0.25s;
+  }
+  #panel.closed #panelToggle .cv { transform: rotate(45deg) translate(-1px, -1px); }
+  #panelBody {
+    padding: 2px 16px 14px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 13px;
+  }
+  #panel.closed #panelBody { display: none; }
+
+  .ctl label {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
+  }
+  .ctl output {
+    color: var(--ink); font-variant-numeric: tabular-nums;
+    text-transform: none; letter-spacing: 0; font-weight: 500;
+  }
+  .ctl input[type="range"] { width: 100%; accent-color: var(--accent); height: 22px; }
+  .ctl .sub { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  button.btn {
+    font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--ink);
+    background: rgba(255, 255, 255, 0.07); border: 1px solid var(--line);
+    border-radius: 9px; padding: 8px 12px; cursor: pointer; flex: 1 1 auto;
+    touch-action: manipulation;
+  }
+  button.btn:hover { background: rgba(255, 255, 255, 0.13); }
+  button.btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.btn.primary { background: var(--accent); color: #171a10; border-color: transparent; }
+  button.btn.primary:hover { background: #e4ef62; }
+
+  /* ---- minimap ---- */
+  #mapbox { top: 14px; right: 14px; padding: 10px 12px 8px; }
+  #mapbox .eyebrow { margin-bottom: 6px; }
+  #map { display: block; }
+  #mapbox .cap { font-size: 0.7rem; color: var(--muted); margin-top: 5px; }
+  #mapbox .cap b { color: var(--good); font-weight: 600; }
+
+  /* ---- d-pad ---- */
+  #dpadbox { right: 14px; bottom: 14px; padding: 10px 12px 12px; text-align: center; }
+  #dpadbox .eyebrow { margin-bottom: 8px; }
+  #dpad {
+    display: grid; grid-template-columns: repeat(3, 38px);
+    grid-template-rows: repeat(3, 38px); gap: 4px; margin: 0 auto;
+  }
+  #dpad button {
+    font: inherit; font-size: 1rem; color: var(--ink);
+    background: rgba(255, 255, 255, 0.07); border: 1px solid var(--line);
+    border-radius: 9px; cursor: pointer; touch-action: none;
+  }
+  #dpad button:hover { background: rgba(255, 255, 255, 0.14); }
+  #dpad button:focus-visible { outline: 2px solid var(--accent); }
+  #dpad .blank { visibility: hidden; }
+  #dpadbox .cap { font-size: 0.68rem; color: var(--muted); margin-top: 7px; }
+
+  #hint {
+    bottom: 14px; left: 14px; padding: 9px 14px;
+    font-size: 0.75rem; color: var(--muted); max-width: 300px;
+    background: var(--glass-soft);
+  }
+  #hint b { color: var(--ink); font-weight: 600; }
+
+  @media (max-width: 1120px) {
+    /* tablets & small laptops: the centered stat pill would collide with the
+       side panels, so it becomes a slim full-width strip everything tucks under */
+    #stats {
+      left: 8px; right: 8px; top: 8px; transform: none;
+      justify-content: center; padding: 6px 0;
+    }
+    #stats .stat { padding: 1px 12px; }
+    #stats .val { font-size: 1.2rem; }
+    #panel { top: 74px; left: 8px; max-height: calc(100vh - 90px); }
+    #mapbox { top: 74px; right: 8px; }
+  }
+  @media (max-width: 1120px) and (max-height: 800px) {
+    /* short tablet landscape: shrink the plan view clear of the d-pad */
+    #mapbox { transform: scale(0.82); transform-origin: top right; }
+  }
+  @media (max-width: 760px) {
+    #stats .stat { padding: 1px 9px; }
+    #stats .eyebrow { font-size: 0.56rem; }
+    #stats .val { font-size: 1.05rem; }
+    #panel { width: min(272px, calc(100vw - 16px)); max-height: calc(100vh - 92px); }
+    #panel.closed { width: min(240px, calc(100vw - 165px)); }  /* clear of the plan view */
+    #hint, #mapbox .cap { display: none; }
+    #mapbox { transform: scale(0.5); transform-origin: top right; }
+    #dpadbox { right: 8px; bottom: 8px; transform: scale(0.85); transform-origin: bottom right; }
+  }
+  @media (max-height: 520px) {
+    /* landscape phones: everything shrinks, d-pad moves to the free left corner */
+    #hint, #mapbox .cap { display: none; }
+    #mapbox { transform: scale(0.5); transform-origin: top right; }
+    #panel { max-height: calc(100vh - 90px); }
+    #dpadbox {
+      left: 8px; right: auto; bottom: 8px;
+      transform: scale(0.85); transform-origin: bottom left;
+    }
+  }
+  @media (max-width: 430px) {
+    #stats .stat:nth-child(3) { display: none; }  /* spread: nice-to-have, drop first */
+    #panelHead h1 { font-size: 0.85rem; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #panelHead .chev { transition: none; }
+  }
+</style>
+
+<canvas id="scene"></canvas>
+
+<section id="stats" class="hud glass" aria-live="polite">
+  <div class="stat" id="statTrue">
+    <span class="eyebrow">Actually riding</span>
+    <div class="val"><span id="trueN">2</span> <small>abreast max</small></div>
+  </div>
+  <div class="stat" id="statSeen">
+    <span class="eyebrow">Looks like, from here</span>
+    <div class="val"><span id="seenN">–</span> <small>abreast</small></div>
+  </div>
+  <div class="stat">
+    <span class="eyebrow">Group spread</span>
+    <div class="val"><span id="spreadM">–</span> <small>m wide</small></div>
+  </div>
+</section>
+
+<section id="panel" class="hud glass">
+  <div id="panelHead" role="button" tabindex="0" aria-expanded="true">
+    <div>
+      <span class="eyebrow">Two abreast</span>
+      <h1>The view from behind</h1>
+    </div>
+    <span id="panelToggle"><span id="ptxt">Hide</span><span class="cv"></span></span>
+  </div>
+  <div id="panelBody">
+    <div class="ctl">
+      <label>View <output id="viewOut">above</output></label>
+      <input type="range" id="viewR" min="0" max="1000" value="0" aria-label="Camera: above to driver">
+      <button class="btn primary" id="sweepBtn" style="margin-top:6px">Sweep down to driver’s view</button>
+    </div>
+    <div class="ctl">
+      <label>Riders <output id="nOut">10</output></label>
+      <input type="range" id="nR" min="5" max="15" value="10">
+    </div>
+    <div class="ctl">
+      <label>Group tidiness <output id="chaosOut">7 / 10</output></label>
+      <input type="range" id="chaosR" min="0" max="10" value="7">
+      <div class="sub">0 = perfectly in line · 10 = maximum chaos</div>
+    </div>
+    <div class="ctl">
+      <label>Riding paired <output id="pairOut">80%</output></label>
+      <input type="range" id="pairR" min="0" max="100" value="80" step="5">
+      <div class="sub">rest ride solo, sandwiched in the group</div>
+    </div>
+    <div class="ctl">
+      <label>Distance from curb <output id="curbOut">0.4 m</output></label>
+      <input type="range" id="curbR" min="10" max="150" value="40">
+    </div>
+    <div class="ctl">
+      <label>Car behind group <output id="carOut">15 m</output></label>
+      <input type="range" id="carR" min="5" max="50" value="15">
+    </div>
+    <div class="btnrow">
+      <button class="btn" id="regenBtn">↻ New formation</button>
+      <button class="btn" id="sideBtn">⇄ Ride on right</button>
+    </div>
+  </div>
+</section>
+
+<section id="mapbox" class="hud glass">
+  <span class="eyebrow">Plan view — the truth</span>
+  <canvas id="map" width="240" height="460"></canvas>
+  <div class="cap">never more than <b>2 side by side</b></div>
+</section>
+
+<section id="dpadbox" class="hud glass">
+  <span class="eyebrow">Driver’s eye</span>
+  <div id="dpad">
+    <span class="blank"></span><button data-dx="0" data-dy="1" aria-label="Eye up">▲</button><span class="blank"></span>
+    <button data-dx="-1" data-dy="0" aria-label="Eye left">◀</button><button id="eyeReset" aria-label="Reset eye">●</button><button data-dx="1" data-dy="0" aria-label="Eye right">▶</button>
+    <span class="blank"></span><button data-dx="0" data-dy="-1" aria-label="Eye down">▼</button><span class="blank"></span>
+  </div>
+  <div class="cap">or use arrow keys</div>
+</section>
+
+<div id="hint" class="hud glass">
+  <b>The argument:</b> a group riding a legal two abreast can look
+  three or four wide from the car — perspective stacks the natural
+  scatter within the lane. Check the plan view: still only two.
+</div>
+
+<script>
+"use strict";
+/* ================= utilities ================= */
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeIO = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const V = (x, y, z) => ({ x, y, z });
+const sub = (a, b) => V(a.x - b.x, a.y - b.y, a.z - b.z);
+const cross = (a, b) => V(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+function norm(v) {
+  const l = Math.hypot(v.x, v.y, v.z) || 1;
+  return V(v.x / l, v.y / l, v.z / l);
+}
+
+/* ================= world constants ================= */
+const ROAD_W = 7;          // single carriageway, two 3.5 m lanes
+const LANE_C = 1.75;       // center of the nearside lane
+const EYE_H = 1.2;         // car driver eye height
+const SHOULDER = 0.45;     // rider width incl. elbows
+const SPEED = 8.5;         // m/s, ~30 km/h
+const NEAR = 0.14;
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const JERSEYS = ["#c94f45", "#3d7dc4", "#d9a13b", "#4d9e6a", "#8a5db0",
+  "#c4682f", "#4aa8a2", "#b0486e", "#7a8c3a", "#5a6ec4",
+  "#a04747", "#3f8fae", "#c78a2e", "#5f9e4d", "#96589a"];
+
+/* ================= state ================= */
+const state = {
+  n: 10, chaos: 7, pairPct: 80, curb: 0.4, carDist: 15,
+  view: 0,                 // 0 = top-down, 1 = driver
+  flip: false,             // false = UK left-hand traffic
+  eye: { x: 0, y: 0 },     // driver-eye nudge, meters
+  seed: 20260711,
+  time: 0,
+  sweep: null,             // {from,to,t0,dur}
+  seenEMA: 2,
+};
+let riders = [];
+
+/* ================= formation ================= */
+function generate() {
+  const rnd = mulberry32(state.seed);
+  const n = state.n;
+  let pairs = clamp(Math.round(n * state.pairPct / 100 / 2), 0, Math.floor(n / 2));
+  const solos = n - pairs * 2;
+  // row list: true = pair row, false = solo row; solos spread through the middle
+  const rows = new Array(pairs).fill(true);
+  for (let i = 0; i < solos; i++) {
+    const pos = rows.length ? 1 + Math.floor((i + 0.5) / solos * Math.max(rows.length - 1, 1)) : 0;
+    rows.splice(clamp(pos, 0, rows.length), 0, false);
+  }
+  riders = [];
+  let colorAt = Math.floor(rnd() * JERSEYS.length);
+  rows.forEach((isPair, ri) => {
+    const mk = (col, soloMix) => riders.push({
+      row: ri,
+      col,                          // 0 = curbside, 1 = outside
+      soloMix,                      // solo riders drift between the two lines with chaos
+      xJit: (rnd() * 2 - 1),        // unit jitters, scaled live by the chaos slider
+      zJit: (rnd() * 2 - 1),
+      gapJit: rnd(),
+      spaceJit: rnd(),
+      driftP1: rnd() * Math.PI * 2,
+      driftP2: rnd() * Math.PI * 2,
+      pedalP: rnd() * Math.PI * 2,
+      cadence: 6.2 + rnd() * 1.6,
+      hue: JERSEYS[(colorAt++) % JERSEYS.length],
+      skin: rnd() < 0.5 ? "#caa07e" : "#8a6248",
+      x: 0, z: 0, bob: 0,
+    });
+    if (isPair) { mk(0, 0); mk(1, 0); }
+    else mk(0, rnd());
+  });
+  state.rowCount = rows.length;
+}
+
+/* live positions: chaos & curb sliders morph the same formation smoothly */
+function updatePositions() {
+  const c = state.chaos / 10;
+  const t = state.time;
+  const inX = state.curb + 0.45;                 // curbside line (handlebar center)
+  let z = 0, lastRow = -1;
+  for (const r of riders) {
+    if (r.row !== lastRow) {
+      if (lastRow >= 0) z += 1.85 + r.spaceJit * 1.4 * c;
+      lastRow = r.row;
+    }
+    let x = inX + (r.col === 1 ? 0.85 + r.gapJit * 0.65 * c : 0);
+    x += r.soloMix * c * 1.25;                   // sandwiched solos wander off-line
+    x += r.xJit * 1.0 * c;
+    if (!reduceMotion) {
+      x += (Math.sin(t * 0.5 + r.driftP1) * 0.16 + Math.sin(t * 0.23 + r.driftP2) * 0.24) * c;
+    }
+    r.x = clamp(x, 0.32, 4.3);
+    r.z = z + r.zJit * 0.35 * c;
+    r.bob = reduceMotion ? 0 : Math.sin(t * r.cadence * 2 + r.pedalP) * 0.008;
+  }
+  // paired riders keep clear handlebar room, whatever the jitter and drift do
+  const SEP = 0.85;
+  for (let i = 1; i < riders.length; i++) {
+    const a = riders[i - 1], b = riders[i];
+    if (a.row !== b.row || Math.abs(b.x - a.x) >= SEP) continue;
+    const mid = (a.x + b.x) / 2;
+    let lo = mid - SEP / 2, hi = mid + SEP / 2;
+    if (lo < 0.32) { hi += 0.32 - lo; lo = 0.32; }
+    if (hi > 4.3) { lo -= hi - 4.3; hi = 4.3; }
+    if (a.x <= b.x) { a.x = lo; b.x = hi; } else { a.x = hi; b.x = lo; }
+  }
+}
+const Wx = x => state.flip ? ROAD_W - x : x;     // mirror for right-hand traffic
+
+/* ================= camera ================= */
+function camera() {
+  const s = easeIO(clamp(state.view, 0, 1));
+  const zs = riders.map(r => r.z);
+  const zMin = Math.min(...zs), zMax = Math.max(...zs);
+  const cx = Wx(riders.reduce((a, r) => a + r.x, 0) / riders.length);
+  const cz = (zMin + zMax) / 2;
+
+  const ex = state.flip ? -state.eye.x : state.eye.x;
+  const dX = Wx(LANE_C) + ex, dY = EYE_H + state.eye.y, dZ = zMin - state.carDist;
+  const drvPos = V(dX, dY, dZ);
+  const drvTgt = V(dX, dY, dZ + 60);
+
+  // orbit the group's center from overhead down to the driver's seat, so the
+  // whole group stays framed at a near-constant angular pace
+  const C = V(cx, 1.0, cz);
+  const dvx = drvPos.x - C.x, dvy = drvPos.y - C.y, dvz = drvPos.z - C.z;
+  const hd = Math.hypot(dvx, dvz);
+  const uh = { x: dvx / hd, z: dvz / hd };
+  const phi = Math.atan2(dvy, hd);                 // driver's elevation, ~level
+  const L = Math.hypot(dvy, hd);
+  const alpha = lerp(Math.PI * 0.494, phi, s);     // ~89° overhead → driver
+  const R = lerp(20 + (zMax - zMin) * 0.35, L, s);
+  const pos = V(C.x + uh.x * R * Math.cos(alpha), C.y + R * Math.sin(alpha),
+    C.z + uh.z * R * Math.cos(alpha));
+  // hold the gaze on the group; level out to the road ahead only at the end
+  const tt = s * s * s * s;
+  const tgt = V(lerp(C.x, drvTgt.x, tt), lerp(C.y, drvTgt.y, tt), lerp(C.z, drvTgt.z, tt));
+  const upHint = norm(V(0, s, 1 - s));
+
+  const f = norm(sub(tgt, pos));
+  let r = cross(upHint, f);
+  if (Math.hypot(r.x, r.y, r.z) < 1e-4) r = cross(V(0, 0, 1), f);
+  r = norm(r);
+  const u = cross(f, r);
+  return { pos, f, r, u, s, zMin, zMax };
+}
+const toCam = (p, c) => {
+  const d = sub(p, c.pos);
+  return V(dot(d, c.r), dot(d, c.u), dot(d, c.f));
+};
+
+/* ================= renderer ================= */
+const cv = document.getElementById("scene");
+const ctx = cv.getContext("2d");
+let CW = 0, CH = 0, FPX = 0;
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  CW = innerWidth; CH = innerHeight;
+  cv.width = CW * dpr; cv.height = CH * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  FPX = (CH / 2) / Math.tan(55 * Math.PI / 360);
+}
+addEventListener("resize", resize);
+resize();
+
+const px = (p, cs) => ({ x: CW / 2 + cs.x * FPX / cs.z, y: CH / 2 - cs.y * FPX / cs.z, z: cs.z });
+
+/* clip a camera-space polygon against the near plane, then project */
+function projPoly(worldPts, cam) {
+  const cs = worldPts.map(p => toCam(p, cam));
+  const out = [];
+  for (let i = 0; i < cs.length; i++) {
+    const a = cs[i], b = cs[(i + 1) % cs.length];
+    if (a.z > NEAR) out.push(a);
+    if ((a.z > NEAR) !== (b.z > NEAR)) {
+      const t = (NEAR - a.z) / (b.z - a.z);
+      out.push(V(lerp(a.x, b.x, t), lerp(a.y, b.y, t), NEAR));
+    }
+  }
+  return out.map(c => px(c, c));
+}
+function fillPoly(worldPts, cam, fill) {
+  const pts = projPoly(worldPts, cam);
+  if (pts.length < 3) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+function seg(a, b, cam, widthM, color) {
+  let ca = toCam(a, cam), cb = toCam(b, cam);
+  if (ca.z <= NEAR && cb.z <= NEAR) return;
+  if (ca.z <= NEAR || cb.z <= NEAR) {
+    const t = (NEAR - ca.z) / (cb.z - ca.z);
+    const m = V(lerp(ca.x, cb.x, t), lerp(ca.y, cb.y, t), NEAR);
+    if (ca.z <= NEAR) ca = m; else cb = m;
+  }
+  const pa = px(ca, ca), pb = px(cb, cb);
+  ctx.beginPath();
+  ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y);
+  ctx.lineWidth = clamp(widthM * FPX / ((ca.z + cb.z) / 2), 0.5, 60);
+  ctx.strokeStyle = color;
+  ctx.stroke();
+}
+/* billboard sphere: always a filled disc facing the camera */
+function sphere3d(c, rad, cam, fill) {
+  const cs = toCam(c, cam);
+  if (cs.z < NEAR) return;
+  const p = px(cs, cs);
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, rad * FPX / cs.z, 0, 7);
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+/* circle lying in the plane spanned by unit axes u1,u2 around center c */
+function circle3d(c, rad, u1, u2, cam, fill, stroke, widthM) {
+  const pts = [];
+  for (let i = 0; i < 16; i++) {
+    const a = i / 16 * Math.PI * 2;
+    pts.push(V(
+      c.x + rad * (Math.cos(a) * u1.x + Math.sin(a) * u2.x),
+      c.y + rad * (Math.cos(a) * u1.y + Math.sin(a) * u2.y),
+      c.z + rad * (Math.cos(a) * u1.z + Math.sin(a) * u2.z)));
+  }
+  const sp = projPoly(pts, cam);
+  if (sp.length < 3) return;
+  ctx.beginPath();
+  ctx.moveTo(sp[0].x, sp[0].y);
+  for (let i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x, sp[i].y);
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) {
+    ctx.lineWidth = clamp(widthM * FPX / Math.max(sp[0].z, NEAR), 0.5, 30);
+    ctx.strokeStyle = stroke; ctx.stroke();
+  }
+}
+
+/* ---------- scene pieces ---------- */
+function drawGround(cam, scroll) {
+  // sky
+  const sky = ctx.createLinearGradient(0, 0, 0, CH);
+  sky.addColorStop(0, "#a9bac9");
+  sky.addColorStop(0.62, "#dfe7ec");
+  sky.addColorStop(1, "#e9ede9");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, CW, CH);
+
+  const z0 = cam.pos.z - 320, z1 = cam.pos.z + 520;
+  const quad = (xa, xb, col) =>
+    fillPoly([V(xa, 0, z0), V(xb, 0, z0), V(xb, 0, z1), V(xa, 0, z1)], cam, col);
+
+  quad(-320, 327, "#6d8f5b");                     // grass
+  quad(-0.42, ROAD_W + 0.42, "#8e918f");          // curb stones
+  quad(0, ROAD_W, "#585c60");                     // tarmac
+  quad(0.14, 0.30, "#cfd3cf");                    // edge lines
+  quad(ROAD_W - 0.30, ROAD_W - 0.14, "#cfd3cf");
+
+  // scrolling centerline dashes
+  const phase = scroll % 6;
+  for (let z = Math.floor(z0 / 6) * 6; z < z1; z += 6) {
+    const zd = z - phase;
+    fillPoly([V(3.42, 0, zd), V(3.58, 0, zd), V(3.58, 0, zd + 2.4), V(3.42, 0, zd + 2.4)],
+      cam, "#d6d9d4");
+  }
+
+  // horizon haze once the camera comes down
+  if (cam.s > 0.3) {
+    const far = px(toCam(V(cam.pos.x + cam.f.x * 900, cam.pos.y, cam.pos.z + cam.f.z * 900), cam),
+      toCam(V(cam.pos.x + cam.f.x * 900, cam.pos.y, cam.pos.z + cam.f.z * 900), cam));
+    if (isFinite(far.y)) {
+      const g = ctx.createLinearGradient(0, far.y - 30, 0, far.y + 120);
+      g.addColorStop(0, "rgba(223,231,236,0.95)");
+      g.addColorStop(1, "rgba(223,231,236,0)");
+      ctx.globalAlpha = cam.s;
+      ctx.fillStyle = g;
+      ctx.fillRect(0, far.y - 30, CW, 150);
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+const GREENS = [
+  ["#3f5c38", "#4b6b41", "#5c7d4c"],
+  ["#44643a", "#517546", "#638553"],
+  ["#3a573b", "#486845", "#587a50"],
+];
+/* a bush/canopy as layered lobes: shadow base, two mid lobes, top highlight */
+function foliage(cx, cy, rx, ry, seed) {
+  const pal = GREENS[Math.abs(seed) % GREENS.length];
+  const fl = Math.sin(seed * 9.17) * 0.12;       // per-plant lobe wobble
+  ctx.fillStyle = pal[0];
+  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 7); ctx.fill();
+  if (rx < 4) return;                            // too far to see detail
+  ctx.fillStyle = pal[1];
+  ctx.beginPath(); ctx.ellipse(cx - rx * (0.32 + fl), cy - ry * 0.18, rx * 0.6, ry * 0.66, -0.3, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx + rx * (0.36 - fl), cy - ry * 0.08, rx * 0.5, ry * 0.6, 0.25, 0, 7); ctx.fill();
+  ctx.fillStyle = pal[2];
+  ctx.beginPath(); ctx.ellipse(cx + rx * fl, cy - ry * 0.4, rx * 0.42, ry * 0.38, 0.1, 0, 7); ctx.fill();
+}
+function drawHedges(cam, scroll) {
+  const items = [];
+  const w0 = cam.pos.z - 40, w1 = cam.pos.z + 300;
+  for (const side of [-1.9, ROAD_W + 1.9]) {
+    const sp = 3.1;
+    // m is the plant's identity, so its size/offset travels with it as the world scrolls
+    for (let m = Math.floor((w0 + scroll) / sp); m * sp - scroll < w1; m++) {
+      const z = m * sp - scroll;
+      const h = 1.35 + Math.abs(Math.sin(m * 12.9898 + side)) * 0.9;
+      items.push({ x: side + Math.sin(m * 3.3) * 0.5, z, h, w: 2.6, tree: false, seed: m * 7 + (side < 0 ? 0 : 3) });
+    }
+    const tsp = 26;
+    for (let m = Math.floor((w0 + scroll) / tsp); m * tsp - scroll < w1; m++) {
+      const z = m * tsp - scroll;
+      items.push({ x: side + (side < 0 ? -3.4 : 3.4), z, h: 5.5 + Math.abs(Math.sin(m * 7.7)) * 2, w: 4, tree: true, seed: m * 13 + (side < 0 ? 1 : 5) });
+    }
+  }
+  items.sort((a, b) => (b.z - cam.pos.z) * cam.f.z - (a.z - cam.pos.z) * cam.f.z);
+  for (const it of items) {
+    const cs = toCam(V(it.x, it.h * 0.55, it.z), cam);
+    if (cs.z < 1.5) continue;
+    const p = px(cs, cs);
+    const rx = it.w * 0.5 * FPX / cs.z, ry = it.h * 0.5 * FPX / cs.z;
+    if (rx < 0.5 || p.x < -rx * 2 || p.x > CW + rx * 2) continue;
+    ctx.globalAlpha = clamp((285 - cs.z) / 130, 0, 1);
+    if (ctx.globalAlpha === 0) { ctx.globalAlpha = 1; continue; }
+    if (it.tree) {
+      ctx.strokeStyle = "#5c4a38";
+      ctx.lineWidth = Math.max(0.22 * FPX / cs.z, 0.5);
+      ctx.beginPath(); ctx.moveTo(p.x, p.y + ry); ctx.lineTo(p.x, p.y); ctx.stroke();
+      foliage(p.x, p.y - ry * 0.25, rx, ry * 0.75, it.seed);
+    } else {
+      foliage(p.x, p.y, rx, ry, it.seed);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawCar(cam) {
+  if (cam.s > 0.9) return;                        // we're inside it by then
+  const x = Wx(LANE_C);
+  const z1 = riders.reduce((m, r) => Math.min(m, r.z), 1e9) - state.carDist;
+  const front = z1 + 1.7, rear = front - 4.35, hw = 0.87;
+  const roof = "#46525e", body = "#37424d";
+  fillPoly([V(x - hw, 0.6, rear), V(x + hw, 0.6, rear), V(x + hw, 0.75, front), V(x - hw, 0.75, front)], cam, body);
+  fillPoly([V(x - hw, 1.42, rear + 1.1), V(x + hw, 1.42, rear + 1.1), V(x + hw * 0.92, 1.38, front - 1.4), V(x - hw * 0.92, 1.38, front - 1.4)], cam, roof);
+  fillPoly([V(x - hw * 0.92, 1.38, front - 1.4), V(x + hw * 0.92, 1.38, front - 1.4), V(x + hw, 0.85, front - 0.2), V(x - hw, 0.85, front - 0.2)], cam, "#9db3c2");
+  fillPoly([V(x - hw, 0.85, front - 0.2), V(x + hw, 0.85, front - 0.2), V(x + hw, 0.72, front), V(x - hw, 0.72, front)], cam, body);
+}
+
+function drawRider(r, cam) {
+  const x = Wx(r.x), y = r.bob, z = r.z;
+  const P = (dx, dy, dz) => V(x + (state.flip ? -dx : dx), dy + y, z + dz);
+  const zc = toCam(V(x, 1, z), cam).z;
+  if (zc < NEAR) return;
+
+  // soft shadow
+  ctx.globalAlpha = 0.22;
+  fillPoly([P(-0.3, 0.005, -0.75), P(0.3, 0.005, -0.75), P(0.3, 0.005, 0.85), P(-0.3, 0.005, 0.85)], cam, "#20241f");
+  ctx.globalAlpha = 1;
+
+  const RW = P(0, 0.34, -0.48), FW = P(0, 0.34, 0.58);       // wheel centers
+  const BB = P(0, 0.30, 0.03), SEAT = P(0, 0.97, -0.2), HEAD = P(0, 0.95, 0.42);
+  const fwd = V(0, 0, 1), up = V(0, 1, 0);
+  const frame = "#2b2e31", tire = "#232527";
+
+  circle3d(FW, 0.34, up, fwd, cam, null, tire, 0.045);
+  circle3d(RW, 0.34, up, fwd, cam, null, tire, 0.045);
+  seg(RW, SEAT, cam, 0.04, frame);
+  seg(RW, BB, cam, 0.04, frame);
+  seg(BB, SEAT, cam, 0.045, frame);
+  seg(BB, HEAD, cam, 0.045, frame);
+  seg(SEAT, HEAD, cam, 0.04, frame);
+  seg(HEAD, FW, cam, 0.04, frame);
+  // handlebars
+  seg(P(-0.21, 1.0, 0.42), P(0.21, 1.0, 0.42), cam, 0.035, frame);
+
+  // legs, driven by crank angle
+  const a = reduceMotion ? r.pedalP : state.time * r.cadence + r.pedalP;
+  const shorts = "#26292c";
+  for (const sside of [-1, 1]) {
+    const pa = a + (sside < 0 ? 0 : Math.PI);
+    const pedal = P(0.1 * sside, 0.30 + 0.17 * Math.cos(pa), 0.03 + 0.17 * Math.sin(pa));
+    const hip = P(0.09 * sside, 0.95, -0.16);
+    const knee = V((hip.x + pedal.x) / 2 + 0.05 * sside * (state.flip ? -1 : 1),
+      (hip.y + pedal.y) / 2 + 0.1, (hip.z + pedal.z) / 2 + 0.16);
+    seg(hip, knee, cam, 0.105, shorts);
+    seg(knee, pedal, cam, 0.08, r.skin);
+  }
+
+  // torso (jersey), arms, head — tapered hips → shoulders → neck
+  fillPoly([P(-0.14, 0.92, -0.17), P(0.14, 0.92, -0.17), P(0.2, 1.2, 0.1),
+            P(0.195, 1.3, 0.16), P(0.09, 1.37, 0.2), P(-0.09, 1.37, 0.2), P(-0.195, 1.3, 0.16), P(-0.2, 1.2, 0.1)], cam, r.hue);
+  seg(P(-0.185, 1.26, 0.13), P(-0.18, 1.02, 0.40), cam, 0.06, r.skin);
+  seg(P(0.185, 1.26, 0.13), P(0.18, 1.02, 0.40), cam, 0.06, r.skin);
+  sphere3d(P(0, 1.42, 0.26), 0.105, cam, r.skin);
+  sphere3d(P(0, 1.46, 0.245), 0.095, cam, "#1d2023"); // helmet
+}
+
+function drawBonnet(cam) {
+  const a = (cam.s - 0.72) / 0.28;
+  if (a <= 0) return;
+  ctx.globalAlpha = clamp(a, 0, 1);
+  const h = CH, w = CW;
+  ctx.fillStyle = "#252c33";
+  ctx.beginPath();
+  ctx.moveTo(-20, h);
+  ctx.quadraticCurveTo(w * 0.5, h - h * 0.185, w + 20, h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "rgba(180,197,209,0.35)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-20, h - 2);
+  ctx.quadraticCurveTo(w * 0.5, h - h * 0.19, w + 20, h - 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+/* ================= how many abreast does it LOOK? =================
+   From behind, depth is compressed away, so the driver reads the lateral
+   band the bodies cover as riders side by side: union of shoulder
+   intervals across the road, measured in rider widths. */
+function apparentCount() {
+  const W = 0.5;                                  // shoulders + a little handlebar
+  const iv = riders.map(r => [r.x - W / 2, r.x + W / 2]).sort((a, b) => a[0] - b[0]);
+  let union = 0, lo = iv[0][0], hi = iv[0][1];
+  for (const [a, b] of iv) {
+    if (a > hi) { union += hi - lo; lo = a; hi = b; }
+    else hi = Math.max(hi, b);
+  }
+  union += hi - lo;
+  return Math.max(1, Math.round(union / W));
+}
+function trueCount() {
+  let best = 1;
+  for (const a of riders) {
+    let c = 0;
+    for (const b of riders) if (Math.abs(a.z - b.z) < 1.0) c++;
+    best = Math.max(best, c);
+  }
+  return best;
+}
+
+/* ================= minimap ================= */
+const map = document.getElementById("map");
+const mctx = map.getContext("2d");
+function drawMap() {
+  const mw = map.width, mh = map.height;
+  mctx.setTransform(1, 0, 0, 1, 0, 0);
+  mctx.clearRect(0, 0, mw, mh);
+  const zLo = -state.carDist - 5.2, zHi = Math.max(...riders.map(r => r.z)) + 3;
+  const sc = Math.min(22, (mh - 12) / (zHi - zLo));
+  const rx = x => (mw - ROAD_W * sc) / 2 + Wx(x) * sc;
+  const rz = z => mh - 6 - (z - zLo) * sc;
+
+  mctx.fillStyle = "#3e5236";
+  mctx.fillRect(0, 0, mw, mh);
+  mctx.fillStyle = "#54585c";
+  mctx.fillRect(rx(state.flip ? ROAD_W : 0), 0, ROAD_W * sc, mh);
+  mctx.strokeStyle = "#9ea29c";
+  mctx.lineWidth = 2;
+  mctx.setLineDash([9, 9]);
+  mctx.beginPath();
+  mctx.moveTo(rx(3.5), 0); mctx.lineTo(rx(3.5), mh);
+  mctx.stroke();
+  mctx.setLineDash([]);
+
+  // car
+  const cx = rx(LANE_C);
+  mctx.fillStyle = "#8fa7b8";
+  const carW = 1.8 * sc, carL = 4.35 * sc;
+  const carTop = rz(-state.carDist + 1.7);
+  roundRect(mctx, cx - carW / 2, carTop, carW, carL, 3);
+  mctx.fill();
+  mctx.fillStyle = "#1d242b";
+  mctx.beginPath();
+  mctx.arc(cx + state.eye.x * sc * (state.flip ? -1 : 1), carTop + 1.55 * sc, 3.6, 0, 7);
+  mctx.fill();
+
+  // riders
+  for (const r of riders) {
+    mctx.fillStyle = r.hue;
+    mctx.beginPath();
+    mctx.ellipse(rx(r.x), rz(r.z), Math.max(SHOULDER / 2 * sc, 3.5), Math.max(0.85 * sc, 5.5), 0, 0, 7);
+    mctx.fill();
+  }
+}
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+
+/* ================= HUD stats ================= */
+const trueEl = document.getElementById("trueN");
+const seenEl = document.getElementById("seenN");
+const spreadEl = document.getElementById("spreadM");
+function updateStats(cam) {
+  trueEl.textContent = trueCount();
+  const xs = riders.map(r => r.x);
+  spreadEl.textContent = (Math.max(...xs) - Math.min(...xs) + SHOULDER).toFixed(1);
+  if (cam.s > 0.55) {
+    const n = apparentCount();
+    state.seenEMA = state.seenVisible ? lerp(state.seenEMA, n, 0.15) : n;
+    state.seenVisible = true;
+    const shown = Math.round(state.seenEMA);
+    seenEl.textContent = shown;
+    seenEl.classList.toggle("big", shown >= 4);
+  } else {
+    state.seenVisible = false;
+    seenEl.textContent = "–";
+    seenEl.classList.remove("big");
+  }
+}
+
+/* ================= main loop ================= */
+let t0 = performance.now();
+function frame(now) {
+  const dt = Math.min((now - t0) / 1000, 0.1);
+  t0 = now;
+  if (!reduceMotion) state.time += dt;
+
+  if (state.sweep) {
+    const k = clamp((now - state.sweep.t0) / state.sweep.dur, 0, 1);
+    state.view = lerp(state.sweep.from, state.sweep.to, easeIO(k));
+    viewR.value = state.view * 1000;
+    if (k >= 1) state.sweep = null;
+    syncViewLabel();
+  }
+
+  updatePositions();
+  const cam = camera();
+  const scroll = state.time * SPEED;
+
+  drawGround(cam, scroll);
+  drawHedges(cam, scroll);
+  drawCar(cam);
+  const order = riders.slice().sort((a, b) => toCam(V(Wx(b.x), 1, b.z), cam).z - toCam(V(Wx(a.x), 1, a.z), cam).z);
+  for (const r of order) drawRider(r, cam);
+  drawBonnet(cam);
+  drawMap();
+  updateStats(cam);
+  requestAnimationFrame(frame);
+}
+
+/* ================= controls ================= */
+const $ = id => document.getElementById(id);
+const viewR = $("viewR"), sweepBtn = $("sweepBtn");
+
+function bindRange(id, outId, apply, fmt) {
+  const el = $(id), out = $(outId);
+  el.addEventListener("input", () => {
+    apply(+el.value);
+    out.textContent = fmt(+el.value);
+  });
+  out.textContent = fmt(+el.value);
+}
+bindRange("nR", "nOut", v => { state.n = v; generate(); }, v => v);
+bindRange("chaosR", "chaosOut", v => { state.chaos = v; }, v => v + " / 10");
+bindRange("pairR", "pairOut", v => { state.pairPct = v; generate(); }, v => v + "%");
+bindRange("curbR", "curbOut", v => { state.curb = v / 100; }, v => (v / 100).toFixed(1) + " m");
+bindRange("carR", "carOut", v => { state.carDist = v; }, v => v + " m");
+
+function syncViewLabel() {
+  $("viewOut").textContent = state.view < 0.15 ? "above" : state.view > 0.85 ? "driver" : "sweeping…";
+  sweepBtn.textContent = state.view > 0.5 ? "Sweep up to plan view" : "Sweep down to driver’s view";
+}
+viewR.addEventListener("input", () => {
+  state.sweep = null;
+  state.view = +viewR.value / 1000;
+  syncViewLabel();
+});
+sweepBtn.addEventListener("click", () => {
+  const to = state.view > 0.5 ? 0 : 1;
+  state.sweep = { from: state.view, to, t0: performance.now(), dur: reduceMotion ? 350 : 4000 };
+});
+$("regenBtn").addEventListener("click", () => {
+  state.seed = (Math.random() * 1e9) >>> 0;
+  generate();
+});
+$("sideBtn").addEventListener("click", () => {
+  state.flip = !state.flip;
+  $("sideBtn").textContent = state.flip ? "⇄ Ride on left" : "⇄ Ride on right";
+});
+
+/* panel collapse — phones start with it tucked away so the scene shows */
+const panel = $("panel"), head = $("panelHead");
+function syncPanelLabel() {
+  const closed = panel.classList.contains("closed");
+  $("ptxt").textContent = closed ? "Edit settings" : "Hide";
+  head.setAttribute("aria-expanded", String(!closed));
+}
+if (matchMedia("(max-width: 760px), (max-height: 520px)").matches) panel.classList.add("closed");
+syncPanelLabel();
+function togglePanel() {
+  panel.classList.toggle("closed");
+  syncPanelLabel();
+}
+head.addEventListener("click", togglePanel);
+head.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePanel(); } });
+
+/* driver-eye nudge: d-pad + arrow keys */
+function nudge(dx, dy) {
+  state.eye.x = clamp(state.eye.x + dx, -1.6, 1.6);
+  state.eye.y = clamp(state.eye.y + dy, -0.85, 1.6);
+}
+for (const b of document.querySelectorAll("#dpad button[data-dx]")) {
+  let timer = null;
+  const step = () => nudge(+b.dataset.dx * 0.06, +b.dataset.dy * 0.06);
+  b.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    step();
+    timer = setInterval(step, 50);
+  });
+  for (const ev of ["pointerup", "pointerleave", "pointercancel"])
+    b.addEventListener(ev, () => { clearInterval(timer); timer = null; });
+}
+$("eyeReset").addEventListener("click", () => { state.eye.x = 0; state.eye.y = 0; });
+addEventListener("keydown", e => {
+  const k = e.key;
+  if (k === "ArrowUp" || k === "ArrowDown" || k === "ArrowLeft" || k === "ArrowRight") {
+    if (document.activeElement && document.activeElement.tagName === "INPUT") return;
+    e.preventDefault();
+    nudge(k === "ArrowLeft" ? -0.12 : k === "ArrowRight" ? 0.12 : 0,
+      k === "ArrowUp" ? 0.12 : k === "ArrowDown" ? -0.12 : 0);
+  }
+});
+
+/* ================= go ================= */
+/* URL params let you share an exact setup, e.g. ?view=1&chaos=8&n=12&pair=70&curb=0.6&car=20&flip=1 */
+{
+  const q = new URLSearchParams(location.search);
+  const num = (k, lo, hi) => q.has(k) ? clamp(+q.get(k), lo, hi) : null;
+  let v;
+  if ((v = num("n", 5, 15)) !== null) { state.n = Math.round(v); $("nR").value = state.n; }
+  if ((v = num("chaos", 0, 10)) !== null) { state.chaos = Math.round(v); $("chaosR").value = state.chaos; }
+  if ((v = num("pair", 0, 100)) !== null) { state.pairPct = v; $("pairR").value = v; }
+  if ((v = num("curb", 0.1, 1.5)) !== null) { state.curb = v; $("curbR").value = v * 100; }
+  if ((v = num("car", 5, 50)) !== null) { state.carDist = v; $("carR").value = v; }
+  if ((v = num("view", 0, 1)) !== null) { state.view = v; viewR.value = v * 1000; state.urlView = true; }
+  if (q.get("flip") === "1") { state.flip = true; $("sideBtn").textContent = "⇄ Ride on left"; }
+  for (const el of [$("nR"), $("chaosR"), $("pairR"), $("curbR"), $("carR")])
+    el.dispatchEvent(new Event("input"));
+}
+generate();
+syncViewLabel();
+requestAnimationFrame(frame);
+if (!reduceMotion) {
+  // opening moment: show the true formation, then sweep down to the car
+  setTimeout(() => {
+    if (state.view === 0 && !state.sweep && !state.urlView)
+      state.sweep = { from: 0, to: 1, t0: performance.now(), dur: 4000 };
+  }, 1800);
+}
+</script>
